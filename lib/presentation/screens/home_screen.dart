@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_colors.dart';
+import '../../data/services/supabase_service.dart';
 import '../controllers/profile_controller.dart';
 import '../widgets/avatar_badge.dart';
 import '../widgets/player_profile_modal.dart';
@@ -61,6 +62,10 @@ class _HomeScreenState extends State<HomeScreen> {
             children: [
               // 1. Üst Bar: Profil, Bakiye ve Liderlik (Kelime Ustası ve Arkadaşlar butonu kaldırıldı)
               _buildTopBar(context, profile),
+              if (!SupabaseService.isReachable) ...[
+                const SizedBox(height: 12),
+                _buildOfflineNoticeBanner(context),
+              ],
               const SizedBox(height: 24),
 
               // 2. Oyun Modları Başlığı
@@ -435,6 +440,40 @@ class _HomeScreenState extends State<HomeScreen> {
           style: const TextStyle(fontSize: 10.5, color: AppColors.textMuted, fontWeight: FontWeight.w600),
         ),
       ],
+    );
+  }
+
+  Widget _buildOfflineNoticeBanner(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEF4444).withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_off_rounded, color: Color(0xFFEF4444), size: 18),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text(
+              'Çevrimiçi sunucu kapalı / duraklatılmış (paused)',
+              style: TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.w700),
+            ),
+          ),
+          InkWell(
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const CustomRoomScreen()),
+              );
+            },
+            child: const Text(
+              'Ayarlar ⚙️',
+              style: TextStyle(color: Color(0xFF8B5CF6), fontSize: 11.5, fontWeight: FontWeight.w800),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

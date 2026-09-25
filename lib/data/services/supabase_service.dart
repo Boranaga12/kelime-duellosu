@@ -1,34 +1,122 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:math';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../models/friend.dart';
 import '../models/player.dart';
 
 class SupabaseService {
-  static const String supabaseUrl = 'https://qntrnqstskglkmonemym.supabase.co';
-  static const String supabaseAnonKey = 'sb_publishable_Lq14ZJIaBsrDf1n2Ce5dAA_iqX82Hpz';
+  static const String defaultSupabaseUrl = 'https://qntrnqstskglkmonemym.supabase.co';
+  static const String defaultSupabaseAnonKey = 'sb_publishable_Lq14ZJIaBsrDf1n2Ce5dAA_iqX82Hpz';
+
+  static String _activeUrl = defaultSupabaseUrl;
+  static String _activeKey = defaultSupabaseAnonKey;
+
+  static String get supabaseUrl => _activeUrl;
+  static String get supabaseAnonKey => _activeKey;
 
   static SupabaseClient? _client;
   static bool _isInitialized = false;
+  static bool _isReachable = false;
+  static String? _connectionError;
 
   static SupabaseClient? get client => _client;
   static bool get isInitialized => _isInitialized;
+  static bool get isReachable => _isReachable;
+  static String? get connectionError => _connectionError;
 
-  /// Supabase istemcisini başlatır (Hata durumunda offline moda düşer, çökmez)
+  /// Supabase istemcisini başlatır (Özel URL/Key varsa SharedPreferences'tan okur)
   static Future<void> initialize() async {
     try {
+      final prefs = await SharedPreferences.getInstance();
+      _activeUrl = prefs.getString('custom_supabase_url') ?? defaultSupabaseUrl;
+      _activeKey = prefs.getString('custom_supabase_anon_key') ?? defaultSupabaseAnonKey;
+
       await Supabase.initialize(
-        url: supabaseUrl,
-        publishableKey: supabaseAnonKey,
+        url: _activeUrl,
+        publishableKey: _activeKey,
       );
       _client = Supabase.instance.client;
       _isInitialized = true;
-      debugPrint('Supabase başarıyla bağlandı: $supabaseUrl');
+      debugPrint('Supabase istemcisi yapılandırıldı: $_activeUrl');
+
+      // İlk bağlantı kontrolünü asenkron başlat
+      unawaited(checkConnection());
     } catch (e) {
-      debugPrint('Supabase başlatma uyarısı (Offline modda çalışılıyor): $e');
+      debugPrint('Supabase başlatma uyarısı: $e');
       _isInitialized = false;
+      _isReachable = false;
+      _connectionError = e.toString();
+    }
+  }
+
+  /// Sunucu bağlantı durumunu gerçek bir sorguyla test eder (Zaman aşımı: 3 saniye)
+  static Future<bool> checkConnection() async {
+    if (!_isInitialized || _client == null) {
+      _isReachable = false;
+      _connectionError = 'Supabase başlatılamadı.';
+      return false;
+    }
+
+    try {
+      await _client!
+          .from('game_rooms')
+          .select('id')
+          .limit(1)
+          .timeout(const Duration(milliseconds: 3000));
+
+      _isReachable = true;
+      _connectionError = null;
+      debugPrint('✅ Supabase canlı bağlantı başarılı!');
+      return true;
+    } catch (e) {
+      _isReachable = false;
+      final errStr = e.toString();
+      if (errStr.contains('Failed host lookup') || errStr.contains('SocketException') || errStr.contains('DNS')) {
+        _connectionError = 'Sunucu adresi bulunamadı! Supabase projeniz duraklatılmış (paused) olabilir.';
+      } else if (errStr.contains('42P01') || errStr.contains('relation "public.game_rooms" does not exist')) {
+        _connectionError = 'Veritabanı tabloları eksik! Lütfen SQL şemasını Supabase üzerinde çalıştırın.';
+      } else {
+        _connectionError = 'Bağlantı hatası: $e';
+      }
+      debugPrint('⚠️ Supabase bağlantı kontrolü uyarısı: $_connectionError');
+      return false;
+    }
+  }
+
+  /// Kullanıcı yeni bir Supabase URL / Key girdiğinde kaydeder ve yeniler
+  static Future<bool> updateCredentials({
+    required String newUrl,
+    required String newKey,
+  }) async {
+    try {
+      final cleanUrl = newUrl.trim();
+      final cleanKey = newKey.trim();
+
+      if (cleanUrl.isEmpty || cleanKey.isEmpty) return false;
+
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('custom_supabase_url', cleanUrl);
+      await prefs.setString('custom_supabase_anon_key', cleanKey);
+
+      _activeUrl = cleanUrl;
+      _activeKey = cleanKey;
+
+      // Supabase'i yeniden başlat
+      await Supabase.initialize(
+        url: _activeUrl,
+        publishableKey: _activeKey,
+      );
+      _client = Supabase.instance.client;
+      _isInitialized = true;
+
+      return await checkConnection();
+    } catch (e) {
+      debugPrint('Credentials güncelleme hatası: $e');
+      return false;
     }
   }
 

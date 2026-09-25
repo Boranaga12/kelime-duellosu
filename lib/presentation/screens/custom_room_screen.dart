@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
@@ -7,6 +8,7 @@ import '../../data/categories_data.dart';
 import '../../data/models/custom_room.dart';
 import '../../data/models/player.dart';
 import '../../data/services/multiplayer_service.dart';
+import '../../data/services/supabase_service.dart';
 import '../controllers/game_controller.dart';
 import '../controllers/profile_controller.dart';
 import '../widgets/avatar_badge.dart';
@@ -30,6 +32,8 @@ class _CustomRoomScreenState extends State<CustomRoomScreen>
   List<CustomRoom> _publicRooms = [];
   bool _isLoadingRooms = false;
   CustomRoom? _currentLobbyRoom;
+  Timer? _lobbyPollTimer;
+  Timer? _roomsPollTimer;
 
   // Oda Kurma Ayarları
   bool _isLocked = false;
@@ -52,6 +56,18 @@ class _CustomRoomScreenState extends State<CustomRoomScreen>
     _tabController = TabController(length: 2, vsync: this);
     _loadPublicRooms();
 
+    // Supabase bağlantı durumunu kontrol et
+    SupabaseService.checkConnection().then((_) {
+      if (mounted) setState(() {});
+    });
+
+    // Açık odaları periyodik kontrol et (3.5s aralıkla, sadece lobi dışındayken)
+    _roomsPollTimer = Timer.periodic(const Duration(milliseconds: 3500), (_) {
+      if (mounted && _currentLobbyRoom == null && _tabController.index == 0) {
+        _loadPublicRooms(silent: true);
+      }
+    });
+
     // Supabase Realtime oda olaylarını dinle
     MultiplayerService.onRoomStateChanged = (updatedRoom) {
       if (mounted) {
@@ -63,8 +79,31 @@ class _CustomRoomScreenState extends State<CustomRoomScreen>
       }
     };
 
+    // Oyun içi kelimeleri canlı dinle
+    MultiplayerService.onWordReceived = (payload) {
+      if (!mounted) return;
+      final word = payload['word']?.toString() ?? '';
+      final isCorrect = payload['is_correct'] == true;
+      final playerId = payload['player_id']?.toString() ?? '';
+      final originalTypo = payload['original_typo']?.toString();
+      context.read<GameController>().submitRemoteWord(
+            word: word,
+            isCorrect: isCorrect,
+            playerId: playerId,
+            originalTypo: originalTypo,
+          );
+    };
+
+    // Oyun içi canlı tepkileri dinle
+    MultiplayerService.onEmoteReceived = (emoji, senderId) {
+      if (!mounted) return;
+      context.read<GameController>().triggerRemoteEmote(emoji);
+    };
+
     MultiplayerService.onGameStartedByHost = (categoryId) {
       if (!mounted || _currentLobbyRoom == null) return;
+      _lobbyPollTimer?.cancel();
+      _lobbyPollTimer = null;
       final userPlayer = context.read<ProfileController>().player;
       final cat = sampleCategories.firstWhere(
         (c) => c.id == categoryId,
@@ -84,8 +123,14 @@ class _CustomRoomScreenState extends State<CustomRoomScreen>
 
   @override
   void dispose() {
+    _lobbyPollTimer?.cancel();
+    _lobbyPollTimer = null;
+    _roomsPollTimer?.cancel();
+    _roomsPollTimer = null;
     MultiplayerService.onRoomStateChanged = null;
     MultiplayerService.onGameStartedByHost = null;
+    MultiplayerService.onWordReceived = null;
+    MultiplayerService.onEmoteReceived = null;
     _tabController.dispose();
     _codeController.dispose();
     _roomNameController.dispose();
@@ -93,8 +138,26 @@ class _CustomRoomScreenState extends State<CustomRoomScreen>
     super.dispose();
   }
 
-  Future<void> _loadPublicRooms() async {
-    setState(() => _isLoadingRooms = true);
+  void _startLobbyPolling(String roomCode) {
+    _lobbyPollTimer?.cancel();
+    _lobbyPollTimer = Timer.periodic(const Duration(milliseconds: 1500), (t) async {
+      if (!mounted || _currentLobbyRoom == null || _currentLobbyRoom!.roomCode != roomCode) {
+        t.cancel();
+        return;
+      }
+      final updated = await MultiplayerService.syncLobbyFromDatabase(roomCode);
+      if (mounted && updated != null && _currentLobbyRoom != null) {
+        setState(() {
+          _currentLobbyRoom = updated;
+        });
+      }
+    });
+  }
+
+  Future<void> _loadPublicRooms({bool silent = false}) async {
+    if (!silent) {
+      setState(() => _isLoadingRooms = true);
+    }
     final rooms = await MultiplayerService.fetchPublicRooms();
     if (mounted) {
       setState(() {
@@ -133,6 +196,7 @@ class _CustomRoomScreenState extends State<CustomRoomScreen>
     setState(() {
       _currentLobbyRoom = room;
     });
+    _startLobbyPolling(room.roomCode);
   }
 
   void _joinRoom(CustomRoom room) async {
@@ -157,6 +221,9 @@ class _CustomRoomScreenState extends State<CustomRoomScreen>
         setState(() {
           _currentLobbyRoom = MultiplayerService.activeCustomRoom;
         });
+        if (_currentLobbyRoom != null) {
+          _startLobbyPolling(_currentLobbyRoom!.roomCode);
+        }
       }
     } else {
       if (mounted) {
@@ -188,6 +255,9 @@ class _CustomRoomScreenState extends State<CustomRoomScreen>
         setState(() {
           _currentLobbyRoom = MultiplayerService.activeCustomRoom;
         });
+        if (_currentLobbyRoom != null) {
+          _startLobbyPolling(_currentLobbyRoom!.roomCode);
+        }
       }
     } else {
       // Eğer şifreli odaya denk gelindiyse kullanıcıdan şifre iste
@@ -207,6 +277,9 @@ class _CustomRoomScreenState extends State<CustomRoomScreen>
             setState(() {
               _currentLobbyRoom = MultiplayerService.activeCustomRoom;
             });
+            if (_currentLobbyRoom != null) {
+              _startLobbyPolling(_currentLobbyRoom!.roomCode);
+            }
           }
           return;
         } else {
@@ -284,6 +357,8 @@ class _CustomRoomScreenState extends State<CustomRoomScreen>
   }
 
   void _leaveLobby() async {
+    _lobbyPollTimer?.cancel();
+    _lobbyPollTimer = null;
     final profile = context.read<ProfileController>();
     await MultiplayerService.leaveAdvancedRoom(playerId: profile.player.id);
     if (mounted) {
@@ -309,6 +384,9 @@ class _CustomRoomScreenState extends State<CustomRoomScreen>
       );
       return;
     }
+
+    _lobbyPollTimer?.cancel();
+    _lobbyPollTimer = null;
 
     final userPlayer = context.read<ProfileController>().player;
     final randomCategory = sampleCategories[DateTime.now().millisecond % sampleCategories.length];
@@ -358,6 +436,23 @@ class _CustomRoomScreenState extends State<CustomRoomScreen>
             style: const TextStyle(fontSize: 16.5, fontWeight: FontWeight.w900, color: Colors.white),
           ),
           centerTitle: true,
+          actions: [
+            IconButton(
+              icon: Icon(
+                SupabaseService.isReachable
+                    ? Icons.cloud_done_rounded
+                    : Icons.cloud_off_rounded,
+                color: SupabaseService.isReachable
+                    ? const Color(0xFF10B981)
+                    : const Color(0xFFEF4444),
+                size: 22,
+              ),
+              tooltip: SupabaseService.isReachable
+                  ? 'Çevrimiçi Sunucu Aktif'
+                  : 'Sunucu Bağlantı Hatası',
+              onPressed: _showServerSettingsDialog,
+            ),
+          ],
           bottom: _currentLobbyRoom == null
               ? TabBar(
                   controller: _tabController,
@@ -388,12 +483,24 @@ class _CustomRoomScreenState extends State<CustomRoomScreen>
 
   /// 1. SEKME: Odalara Katıl (Kodla & Açık Oda Listesi)
   Widget _buildJoinTab() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // 3D Kod Girişi Kartı
+    return RefreshIndicator(
+      onRefresh: () async {
+        await SupabaseService.checkConnection();
+        await _loadPublicRooms();
+      },
+      color: const Color(0xFF8B5CF6),
+      backgroundColor: const Color(0xFF1E293B),
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Çevrimiçi Sunucu Durum Uyarısı (Eğer bağlanılamıyorsa)
+            if (!SupabaseService.isReachable)
+              _buildOfflineWarningBanner(),
+
+            // 3D Kod Girişi Kartı
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -484,7 +591,8 @@ class _CustomRoomScreenState extends State<CustomRoomScreen>
             )
           else
             ..._publicRooms.map((room) => _buildRoomCard(room)),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -1354,4 +1462,217 @@ class _CustomRoomScreenState extends State<CustomRoomScreen>
       ),
     );
   }
+
+  Widget _buildOfflineWarningBanner() {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: const Color(0xFFEF4444).withValues(alpha: 0.15),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.5), width: 1.5),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.cloud_off_rounded, color: Color(0xFFEF4444), size: 22),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: Text(
+                  'Çevrimiçi Sunucu Bağlantısı Sağlanamadı!',
+                  style: TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13.5),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            SupabaseService.connectionError ?? 'Sunucuyla iletişim kurulamıyor. Supabase projeniz duraklatılmış (paused) olabilir.',
+            style: TextStyle(color: Colors.white.withValues(alpha: 0.8), fontSize: 11.5, height: 1.3),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              InkWell(
+                onTap: () async {
+                  final ok = await SupabaseService.checkConnection();
+                  if (mounted) {
+                    setState(() {});
+                    if (ok) {
+                      _loadPublicRooms();
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Sunucu bağlantısı sağlandı! ✅'), backgroundColor: Color(0xFF10B981)),
+                      );
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Bağlanılamadı: ${SupabaseService.connectionError} ❌'), backgroundColor: const Color(0xFFEF4444)),
+                      );
+                    }
+                  }
+                },
+                borderRadius: BorderRadius.circular(10),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF1E293B),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.white24),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.refresh_rounded, size: 14, color: Colors.white),
+                      SizedBox(width: 4),
+                      Text('Bağlantıyı Yenile', style: TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              InkWell(
+                onTap: _showServerSettingsDialog,
+                borderRadius: BorderRadius.circular(10),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF8B5CF6),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.settings_rounded, size: 14, color: Colors.white),
+                      SizedBox(width: 4),
+                      Text('Sunucu Ayarı', style: TextStyle(color: Colors.white, fontSize: 11.5, fontWeight: FontWeight.w700)),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showServerSettingsDialog() {
+    final urlController = TextEditingController(text: SupabaseService.supabaseUrl);
+    final keyController = TextEditingController(text: SupabaseService.supabaseAnonKey);
+    bool isTesting = false;
+    String? testResult = SupabaseService.connectionError;
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) {
+          return AlertDialog(
+            backgroundColor: const Color(0xFF1E293B),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Row(
+              children: [
+                Icon(
+                  SupabaseService.isReachable ? Icons.cloud_done_rounded : Icons.cloud_off_rounded,
+                  color: SupabaseService.isReachable ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+                ),
+                const SizedBox(width: 8),
+                const Text(
+                  'Sunucu Bağlantısı',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: Colors.white),
+                ),
+              ],
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: SupabaseService.isReachable
+                          ? const Color(0xFF065F46).withValues(alpha: 0.3)
+                          : const Color(0xFF991B1B).withValues(alpha: 0.3),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(
+                        color: SupabaseService.isReachable ? const Color(0xFF10B981) : const Color(0xFFEF4444),
+                      ),
+                    ),
+                    child: Text(
+                      SupabaseService.isReachable
+                          ? '✅ Çevrimiçi sunucuya başarıyla bağlı! Canlı odalar ve eşleşme aktif.'
+                          : '⚠️ Sunucu Durumu: ${SupabaseService.connectionError ?? "Bağlantı kurulamadı."}\n\nİpucu: Supabase paneline (supabase.com) girip projenizi "Restore / Unpause" yapınız veya yeni proje bilgilerinizi giriniz.',
+                      style: const TextStyle(fontSize: 12, color: Colors.white),
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  const Text('Supabase Project URL:', style: TextStyle(fontSize: 12, color: AppColors.textMuted, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  TextField(
+                    controller: urlController,
+                    style: const TextStyle(fontSize: 12, color: Colors.white),
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: const Color(0xFF0F172A),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text('Supabase Publishable / Anon Key:', style: TextStyle(fontSize: 12, color: AppColors.textMuted, fontWeight: FontWeight.w700)),
+                  const SizedBox(height: 4),
+                  TextField(
+                    controller: keyController,
+                    obscureText: true,
+                    style: const TextStyle(fontSize: 12, color: Colors.white),
+                    decoration: InputDecoration(
+                      filled: true,
+                      fillColor: const Color(0xFF0F172A),
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
+                    ),
+                  ),
+                  if (testResult != null) ...[
+                    const SizedBox(height: 10),
+                    Text(testResult!, style: const TextStyle(fontSize: 11, color: Color(0xFFF59E0B))),
+                  ],
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('Kapat', style: TextStyle(color: AppColors.textMuted)),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF8B5CF6)),
+                onPressed: isTesting
+                    ? null
+                    : () async {
+                        setDialogState(() => isTesting = true);
+                        final success = await SupabaseService.updateCredentials(
+                          newUrl: urlController.text.trim(),
+                          newKey: keyController.text.trim(),
+                        );
+                        if (mounted) setState(() {});
+                        setDialogState(() {
+                          isTesting = false;
+                          testResult = success ? '✅ Bağlantı başarılı!' : SupabaseService.connectionError;
+                        });
+                        if (success) {
+                          _loadPublicRooms();
+                        }
+                      },
+                child: isTesting
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('Test Et & Kaydet', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
 }
+

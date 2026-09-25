@@ -21,6 +21,9 @@ class MultiplayerService {
 
   static void Function(CustomRoom updatedRoom)? onRoomStateChanged;
   static void Function(String categoryId)? onGameStartedByHost;
+  static void Function(Map<String, dynamic> payload)? onWordReceived;
+  static void Function(String emoji, String senderId)? onEmoteReceived;
+  static Timer? _quickMatchPollTimer;
 
   /// 6 Haneli rastgele oda kodu üretir
   static String generateRoomCode() {
@@ -239,11 +242,43 @@ class MultiplayerService {
       await createRoom(
         host: currentPlayer,
         onGuestJoined: (guest) {
+          _quickMatchPollTimer?.cancel();
+          _quickMatchPollTimer = null;
           onMatchFound(guest, true, _activeRoomCode ?? '');
         },
         onWordReceived: onWordReceived,
         onEmoteReceived: onEmoteReceived,
       );
+
+      // Yedek Yoklama: Broadcast paketi ağda düşerse veritabanından misafir oyuncuyu yakala (1.5s aralıkla)
+      _quickMatchPollTimer?.cancel();
+      _quickMatchPollTimer = Timer.periodic(const Duration(milliseconds: 1500), (t) async {
+        if (_activeRoomCode == null || !SupabaseService.isInitialized || SupabaseService.client == null) {
+          t.cancel();
+          return;
+        }
+        try {
+          final res = await SupabaseService.client!
+              .from('game_rooms')
+              .select()
+              .eq('room_code', _activeRoomCode!)
+              .maybeSingle();
+
+          if (res != null && res['guest_id'] != null) {
+            t.cancel();
+            _quickMatchPollTimer = null;
+            final guest = Player(
+              id: res['guest_id']?.toString() ?? 'guest',
+              name: res['guest_name']?.toString() ?? 'Misafir',
+              tag: '#KW-${1000 + Random().nextInt(9000)}',
+              avatarEmoji: '🎮',
+              trophies: 1200,
+              level: 5,
+            );
+            onMatchFound(guest, true, _activeRoomCode ?? '');
+          }
+        } catch (_) {}
+      });
     } catch (e) {
       debugPrint('findOrCreateQuickMatch hatası: $e');
     }
@@ -251,6 +286,8 @@ class MultiplayerService {
 
   /// Hızlı arama iptal edildiğinde kurulan odayı sil
   static Future<void> cancelQuickMatch() async {
+    _quickMatchPollTimer?.cancel();
+    _quickMatchPollTimer = null;
     if (_activeRoomCode != null && SupabaseService.isInitialized && SupabaseService.client != null) {
       try {
         await SupabaseService.client!
@@ -266,7 +303,7 @@ class MultiplayerService {
   // GELİŞMİŞ ÖZEL ODA SİSTEMİ (2-6 Kişi & Takımlı - Sadece Gerçek Veriler)
   // ==========================================
 
-  /// Realtime kanalına abone olur ve oda olaylarını dinler
+  /// Realtime kanalına abone olur ve oda olaylarını dinler (Lobi + Oyun İçi Kelimeler & Tepkiler)
   static void _subscribeToCustomRoomChannel(String roomCode) {
     if (!SupabaseService.isInitialized || SupabaseService.client == null) return;
 
@@ -301,10 +338,65 @@ class MultiplayerService {
               onGameStartedByHost?.call(catId);
             },
           )
+          .onBroadcast(
+            event: 'word_played',
+            callback: (payload) {
+              onWordReceived?.call(payload);
+            },
+          )
+          .onBroadcast(
+            event: 'emote_sent',
+            callback: (payload) {
+              onEmoteReceived?.call(
+                payload['emoji']?.toString() ?? '🤔',
+                payload['sender_id']?.toString() ?? '',
+              );
+            },
+          )
           .subscribe();
     } catch (e) {
       debugPrint('Realtime custom room abonelik hatası: $e');
     }
+  }
+
+  /// Veritabanından odayı doğrudan eşitler (Broadcast kaçarsa yedek senkronizasyon mekanizması)
+  static Future<CustomRoom?> syncLobbyFromDatabase(String roomCode) async {
+    if (!SupabaseService.isInitialized || SupabaseService.client == null) {
+      return _activeCustomRoom;
+    }
+
+    try {
+      final res = await SupabaseService.client!
+          .from('game_rooms')
+          .select()
+          .eq('room_code', roomCode)
+          .maybeSingle()
+          .timeout(const Duration(milliseconds: 2000));
+
+      if (res != null) {
+        if (res['room_data'] != null) {
+          final serverRoom = CustomRoom.fromJson(Map<String, dynamic>.from(res['room_data']));
+          _activeCustomRoom = serverRoom;
+          final idx = _activeRooms.indexWhere((r) => r.roomCode == roomCode);
+          if (idx != -1) {
+            _activeRooms[idx] = serverRoom;
+          } else {
+            _activeRooms.add(serverRoom);
+          }
+          onRoomStateChanged?.call(serverRoom);
+
+          // Eğer durum in_progress olduysa ve oyun henüz başlamadıysa tetikle
+          if (res['status'] == 'in_progress' && serverRoom.status == 'in_progress') {
+            // oyun başlamış
+          }
+
+          return serverRoom;
+        }
+      }
+    } catch (e) {
+      debugPrint('syncLobbyFromDatabase hatası: $e');
+    }
+    return _activeCustomRoom;
   }
 
   /// Oda güncellemesini Realtime ile tüm katılımcılara yayınlar
