@@ -8,7 +8,6 @@ import '../controllers/game_controller.dart';
 import '../controllers/profile_controller.dart';
 import '../widgets/avatar_badge.dart';
 import '../widgets/emote_picker.dart';
-import '../widgets/joker_button.dart';
 import '../widgets/timer_bar.dart';
 import '../widgets/word_bubble.dart';
 import '../widgets/smooth_briefing_timer_bar.dart';
@@ -111,10 +110,6 @@ class _BattleArenaScreenState extends State<BattleArenaScreen> {
                     remainingSeconds: round.remainingTurnSeconds,
                   ),
 
-                  // Canlı Geri Bildirim & Yapay Zeka Onay Bildirimi
-                  if (game.lastFeedbackMessage != null)
-                    _buildFeedbackBanner(game),
-
                   // Canlı Emote Bildirimi (Varsa)
                   if (game.userEmote != null || game.opponentEmote != null)
                     _buildFloatingEmoteBanner(game, round),
@@ -175,36 +170,8 @@ class _BattleArenaScreenState extends State<BattleArenaScreen> {
                   ),
                 ),
 
-              // 5. 3D Tok Joker Barı
-              Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    JokerButton(
-                      icon: '❄️',
-                      label: '+5 Saniye',
-                      count: isUserTurn ? profile.freezeJokers : 0,
-                      onTap: () {
-                        if (isUserTurn && profile.useFreezeJoker()) {
-                          game.applyFreezeTime();
-                        }
-                      },
-                    ),
-                    const SizedBox(width: 14),
-                    JokerButton(
-                      icon: '💡',
-                      label: 'Harf İpucu',
-                      count: isUserTurn ? profile.hintJokers : 0,
-                      onTap: () {
-                        if (isUserTurn && profile.useHintJoker()) {
-                          game.applyHint();
-                        }
-                      },
-                    ),
-                  ],
-                ),
-              ),
+              // 5. Sabit Yükseklikte Alt Bilgilendirme Barı (Kelime Akışını Kaydırmaz)
+              _buildBottomFeedbackBanner(game),
 
               // 6. 3D Metin Yazma & Gönderme Alanı (Klavye Kapanmaz)
               Container(
@@ -362,116 +329,130 @@ class _BattleArenaScreenState extends State<BattleArenaScreen> {
     );
   }
 
-  /// 2b. Çok Takımlı (2 - 5 Takım) 3D Scoreboard Paneli
+  /// 2b. Çok Takımlı (2 - 5 Takım) 3D Scoreboard Paneli (Tam sığan, taşma yapmayan responsive düzen)
   Widget _buildTeamsScoreboard(GameRound round) {
     final currentUserId = context.read<ProfileController>().player.id;
     final myTeamId = round.playerTeamMap[currentUserId] ?? round.playerTeamMap[round.player1.id] ?? 'team_1';
     final teamIds = round.teamScores.keys.toList();
 
     return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      margin: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
       decoration: BoxDecoration(
         color: const Color(0xFF1E293B),
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(16),
         boxShadow: const [
-          BoxShadow(color: Color(0xFF0F172A), offset: Offset(0, 4)),
+          BoxShadow(color: Color(0xFF0F172A), offset: Offset(0, 3)),
         ],
       ),
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: teamIds.map((tId) {
-            final isCurrentTurn = round.currentTurnTeamId == tId;
-            final isMyTeam = tId == myTeamId;
-            final tColor = round.teamColors[tId] ?? const Color(0xFFEF4444);
-            final tName = round.teamNames[tId] ?? tId;
-            final score = round.teamScores[tId] ?? 0;
+      child: Row(
+        children: teamIds.map((tId) {
+          final isCurrentTurn = round.currentTurnTeamId == tId;
+          final isMyTeam = tId == myTeamId;
+          final tColor = round.teamColors[tId] ?? const Color(0xFFEF4444);
+          final tName = round.teamNames[tId] ?? tId;
+          final score = round.teamScores[tId] ?? 0;
 
-            return Container(
-              margin: const EdgeInsets.symmetric(horizontal: 4),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+          // Takımın aktif oyuncu adı
+          String? activePlayerName;
+          if (isCurrentTurn) {
+            final activeP = round.allPlayers.firstWhere(
+              (p) => p.id == round.currentTurnPlayerId,
+              orElse: () => round.allPlayers.firstWhere(
+                (p) => round.playerTeamMap[p.id] == tId,
+                orElse: () => round.player1,
+              ),
+            );
+            activePlayerName = activeP.id == currentUserId ? 'Sen' : activeP.name;
+          }
+
+          return Expanded(
+            child: Container(
+              margin: const EdgeInsets.symmetric(horizontal: 2.5),
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
               decoration: BoxDecoration(
                 color: isCurrentTurn ? tColor.withValues(alpha: 0.18) : const Color(0xFF0F172A),
-                borderRadius: BorderRadius.circular(12),
+                borderRadius: BorderRadius.circular(10),
                 border: Border.all(
-                  color: isCurrentTurn ? tColor : tColor.withValues(alpha: 0.35),
+                  color: isCurrentTurn ? tColor : tColor.withValues(alpha: 0.25),
                   width: isCurrentTurn ? 2 : 1,
                 ),
                 boxShadow: [
                   if (isCurrentTurn)
                     BoxShadow(
-                      color: tColor.withValues(alpha: 0.3),
+                      color: tColor.withValues(alpha: 0.35),
                       blurRadius: 6,
                       offset: const Offset(0, 2),
                     ),
                 ],
               ),
-              child: Row(
+              child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    width: 9,
-                    height: 9,
-                    decoration: BoxDecoration(
-                      color: tColor,
-                      shape: BoxShape.circle,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisSize: MainAxisSize.min,
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Row(
-                        children: [
-                          Text(
-                            tName,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w900,
-                              color: isCurrentTurn ? Colors.white : AppColors.textLight,
-                            ),
-                          ),
-                          if (isMyTeam) ...[
-                            const SizedBox(width: 3),
-                            const Text('🛡️', style: TextStyle(fontSize: 9)),
-                          ],
-                        ],
-                      ),
-                      if (isCurrentTurn)
-                        Text(
-                          '⚡ Sıra Burada',
-                          style: TextStyle(
-                            fontSize: 8.5,
-                            fontWeight: FontWeight.w800,
-                            color: tColor,
-                          ),
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: BoxDecoration(
+                          color: tColor,
+                          shape: BoxShape.circle,
                         ),
+                      ),
+                      const SizedBox(width: 4),
+                      Flexible(
+                        child: Text(
+                          tName,
+                          style: TextStyle(
+                            fontSize: teamIds.length > 3 ? 10 : 11.5,
+                            fontWeight: FontWeight.w800,
+                            color: isCurrentTurn ? Colors.white : AppColors.textLight,
+                          ),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                      if (isMyTeam) ...[
+                        const SizedBox(width: 2),
+                        const Text('🛡️', style: TextStyle(fontSize: 8)),
+                      ],
                     ],
                   ),
-                  const SizedBox(width: 8),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(
-                      color: tColor.withValues(alpha: 0.25),
-                      borderRadius: BorderRadius.circular(6),
-                    ),
-                    child: Text(
-                      '$score',
-                      style: TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w900,
-                        color: tColor,
+                  const SizedBox(height: 2),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text(
+                        '$score',
+                        style: TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w900,
+                          color: tColor,
+                        ),
                       ),
-                    ),
+                      if (isCurrentTurn && activePlayerName != null) ...[
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            '($activePlayerName)',
+                            style: TextStyle(
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                              color: isCurrentTurn ? tColor : AppColors.textMuted,
+                            ),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
               ),
-            );
-          }).toList(),
-        ),
+            ),
+          );
+        }).toList(),
       ),
     );
   }
@@ -864,16 +845,24 @@ class _BattleArenaScreenState extends State<BattleArenaScreen> {
     );
   }
 
-  /// Canlı Bildirim & Yapay Zeka Onay Banner'ı
-  Widget _buildFeedbackBanner(GameController game) {
+  /// Alt Bilgilendirme ve Uyarı Barı (Sabit 38px Yükseklik - Kelime Akışını Asla Kaydırmaz)
+  Widget _buildBottomFeedbackBanner(GameController game) {
     final msg = game.lastFeedbackMessage;
-    if (msg == null || msg.isEmpty) return const SizedBox.shrink();
+    return Container(
+      height: 38,
+      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      alignment: Alignment.center,
+      child: (msg != null && msg.isNotEmpty)
+          ? _buildFeedbackChip(msg, game.isLastFeedbackSuccess)
+          : const SizedBox.shrink(),
+    );
+  }
 
+  Widget _buildFeedbackChip(String msg, bool isSuccess) {
     final isAi = msg.contains('🤖') ||
         msg.contains('Yapay Zeka') ||
         msg.contains('Düzeltildi') ||
         msg.contains('✨');
-    final isSuccess = game.isLastFeedbackSuccess;
 
     final Color borderColor = isAi
         ? const Color(0xFF38BDF8)
@@ -885,19 +874,17 @@ class _BattleArenaScreenState extends State<BattleArenaScreen> {
             ? const Color(0xFF064E3B).withValues(alpha: 0.92)
             : const Color(0xFF4C0519).withValues(alpha: 0.92));
 
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 250),
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
       decoration: BoxDecoration(
         color: bgColor,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: borderColor.withValues(alpha: 0.75), width: 1.2),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: borderColor.withValues(alpha: 0.75), width: 1.1),
         boxShadow: [
           BoxShadow(
-            color: borderColor.withValues(alpha: 0.35),
-            blurRadius: 10,
-            offset: const Offset(0, 3),
+            color: borderColor.withValues(alpha: 0.25),
+            blurRadius: 8,
+            offset: const Offset(0, 2),
           ),
         ],
       ),
@@ -905,25 +892,25 @@ class _BattleArenaScreenState extends State<BattleArenaScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (isAi) ...[
-            const Text('🤖', style: TextStyle(fontSize: 16)),
-            const SizedBox(width: 8),
+            const Text('🤖', style: TextStyle(fontSize: 14)),
+            const SizedBox(width: 6),
           ] else if (isSuccess) ...[
-            const Icon(Icons.check_circle_rounded, color: Color(0xFF10B981), size: 16),
-            const SizedBox(width: 8),
+            const Icon(Icons.check_circle_rounded, color: Color(0xFF10B981), size: 15),
+            const SizedBox(width: 6),
           ] else ...[
-            const Icon(Icons.info_outline_rounded, color: Color(0xFFF43F5E), size: 16),
-            const SizedBox(width: 8),
+            const Icon(Icons.info_outline_rounded, color: Color(0xFFF43F5E), size: 15),
+            const SizedBox(width: 6),
           ],
           Flexible(
             child: Text(
               msg,
               style: TextStyle(
                 color: isAi ? const Color(0xFFE0F2FE) : Colors.white,
-                fontSize: 12.5,
+                fontSize: 12,
                 fontWeight: FontWeight.w700,
               ),
               textAlign: TextAlign.center,
-              maxLines: 2,
+              maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
           ),

@@ -933,4 +933,111 @@ void main() {
       expect(controller.isLastFeedbackSuccess, false);
     });
   });
+
+  group('Son Senkronizasyon, Bireysel Bot Sırası ve Soru Geçmişi Testleri', () {
+    test('GameRound roundHistory ve CompletedRoundSummary model doğrulaması', () {
+      final cat = sampleCategories.first;
+      final summary = CompletedRoundSummary(
+        roundNumber: 1,
+        category: cat,
+        winningTeamOrPlayerId: 'team_1',
+        winningTeamOrPlayerName: 'Kırmızı Takım',
+        words: [
+          WordEntry(word: 'Elma', playerId: 'p1', isCorrect: true, timestamp: DateTime.now()),
+          WordEntry(word: 'Armut', playerId: 'p2', isCorrect: true, timestamp: DateTime.now()),
+        ],
+        teamScoresAfterRound: {'team_1': 1, 'team_2': 0},
+      );
+
+      const p1 = Player(id: 'p1', name: 'Oyuncu 1', avatarEmoji: '👑');
+      const p2 = Player(id: 'p2', name: 'Oyuncu 2', avatarEmoji: '🤖');
+
+      final round = GameRound(
+        category: cat,
+        player1: p1,
+        player2: p2,
+        currentTurnPlayerId: p1.id,
+        roundHistory: [summary],
+      );
+
+      expect(round.roundHistory.length, 1);
+      expect(round.roundHistory.first.roundNumber, 1);
+      expect(round.roundHistory.first.winningTeamOrPlayerName, 'Kırmızı Takım');
+      expect(round.roundHistory.first.words.length, 2);
+    });
+
+    test('Takımda birden fazla bot olduğunda her bot sırayla (bireysel) hamle yapar', () {
+      final controller = GameController();
+      final cat = sampleCategories.first;
+      const user = Player(id: 'user_1', name: 'Kullanıcı', avatarEmoji: '👑');
+      final bot1 = BotAiEngine.generateBotPlayer();
+      final bot2 = BotAiEngine.generateBotPlayer(existingNames: [bot1.name]);
+
+      final room = CustomRoom(
+        id: 'r_test',
+        roomCode: '123456',
+        roomName: 'Test Odası',
+        hostId: user.id,
+        hostName: user.name,
+        isTeamMode: true,
+        teamCount: 2,
+        targetWins: 2,
+        teams: const [
+          TeamConfig(id: 'team_1', name: 'Takım 1', color: Color(0xFFEF4444)),
+          TeamConfig(id: 'team_2', name: 'Takım 2', color: Color(0xFF0284C7)),
+        ],
+        players: [
+          RoomPlayer(id: user.id, name: user.name, avatarEmoji: '👑', teamId: 'team_1', isHost: true),
+          RoomPlayer(id: bot1.id, name: bot1.name, avatarEmoji: bot1.avatarEmoji, teamId: 'team_2', isBot: true),
+          RoomPlayer(id: bot2.id, name: bot2.name, avatarEmoji: bot2.avatarEmoji, teamId: 'team_2', isBot: true),
+        ],
+      );
+
+      controller.startTeamOrCustomGame(
+        room: room,
+        userPlayer: user,
+        category: cat,
+        showBriefing: false,
+      );
+
+      // Başlangıç: Team 1 (Kullanıcı) sırası
+      expect(controller.round!.currentTurnTeamId, 'team_1');
+      expect(controller.round!.currentTurnPlayerId, user.id);
+
+      // Kullanıcı kelime yazıp sırayı devretsin -> Sıra Team 2'nin 1. botuna (bot1) geçmeli
+      controller.submitRemoteWord(word: cat.acceptedWords[0], isCorrect: true, playerId: user.id);
+      expect(controller.round!.currentTurnTeamId, 'team_2');
+      expect(controller.round!.currentTurnPlayerId, bot1.id);
+
+      // Bot 1 kelime yazıp devretsin -> Sıra tekrar Team 1'e geçmeli
+      controller.submitRemoteWord(word: cat.acceptedWords[1], isCorrect: true, playerId: bot1.id);
+      expect(controller.round!.currentTurnTeamId, 'team_1');
+      expect(controller.round!.currentTurnPlayerId, user.id);
+
+      // Kullanıcı tekrar yazıp devretsin -> Sıra Team 2'nin 2. botuna (bot2) geçmeli (Bireysel bot rotasyonu!)
+      controller.submitRemoteWord(word: cat.acceptedWords[2], isCorrect: true, playerId: user.id);
+      expect(controller.round!.currentTurnTeamId, 'team_2');
+      expect(controller.round!.currentTurnPlayerId, bot2.id);
+    });
+
+    test('Surrender veya Timeout durumunda tamamlanan raunt roundHistory e kaydedilir', () {
+      final controller = GameController();
+      final cat = sampleCategories.first;
+      const user = Player(id: 'u1', name: 'Boran', avatarEmoji: '👑');
+      const opp = Player(id: 'u2', name: 'Rakip', avatarEmoji: '🤖');
+
+      controller.startNewGame(category: cat, userPlayer: user, opponentPlayer: opp);
+      // Kullanıcı bir kelime yazsın
+      controller.submitRemoteWord(word: cat.acceptedWords[0], isCorrect: true, playerId: user.id);
+
+      // Teslim olunsun
+      controller.surrenderMatch();
+
+      expect(controller.round!.status, RoundStatus.finished);
+      expect(controller.round!.roundHistory.isNotEmpty, true);
+      expect(controller.round!.roundHistory.first.roundNumber, 1);
+      expect(controller.round!.roundHistory.first.words.isNotEmpty, true);
+    });
+  });
 }
+

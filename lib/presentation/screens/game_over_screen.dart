@@ -3,6 +3,7 @@ import 'package:flutter_animate/flutter_animate.dart';
 import 'package:provider/provider.dart';
 import '../../core/theme/app_colors.dart';
 import '../../data/models/game_round.dart';
+import '../../data/models/word_entry.dart';
 import '../controllers/leaderboard_controller.dart';
 import '../controllers/profile_controller.dart';
 import '../../data/services/multiplayer_service.dart';
@@ -425,151 +426,373 @@ class _GameOverScreenState extends State<GameOverScreen> {
   Widget _buildSummaryCard(GameRound round, int userWordCount, int opponentWordCount) {
     final bool isMultiOrTeam = round.isTeamMode || round.allPlayers.length > 2;
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(18),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: AppColors.cardBorder),
-      ),
-      child: Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Text(round.category.iconEmoji, style: const TextStyle(fontSize: 18)),
-              const SizedBox(width: 6),
-              Flexible(
-                child: Text(
-                  round.category.title,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w700,
-                    color: AppColors.textLight,
-                  ),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
+    // Tüm rauntların listesi (Geçmiş + Eğer son raunt henüz geçmişte yoksa o raunt)
+    final List<CompletedRoundSummary> allRounds = [];
+    allRounds.addAll(round.roundHistory);
+    final hasCurrentInHistory = round.roundHistory.any((h) => h.roundNumber == round.currentRoundNumber);
+    if (!hasCurrentInHistory && round.words.isNotEmpty) {
+      final roundWinnerId = round.winnerPlayerId ?? (round.isTeamMode ? round.currentTurnTeamId : round.player1.id);
+      final winningName = round.isTeamMode
+          ? (round.teamNames[round.playerTeamMap[roundWinnerId] ?? roundWinnerId] ?? 'Kazanan Takım')
+          : (roundWinnerId == round.player1.id ? round.player1.name : round.player2.name);
+
+      allRounds.add(CompletedRoundSummary(
+        roundNumber: round.currentRoundNumber,
+        category: round.category,
+        winningTeamOrPlayerId: roundWinnerId,
+        winningTeamOrPlayerName: winningName,
+        words: List<WordEntry>.from(round.words),
+        teamScoresAfterRound: round.isTeamMode
+            ? round.teamScores
+            : {
+                round.player1.id: round.player1RoundScore,
+                round.player2.id: round.player2RoundScore,
+              },
+      ));
+    }
+
+    // Toplam maç boyunca her oyuncunun ve takımın doğru kelime sayıları
+    final Map<String, int> totalPlayerCorrectWords = {};
+    final Map<String, int> totalTeamCorrectWords = {};
+    for (final r in allRounds) {
+      for (final w in r.words.where((entry) => entry.isCorrect)) {
+        totalPlayerCorrectWords[w.playerId] = (totalPlayerCorrectWords[w.playerId] ?? 0) + 1;
+        final tId = round.playerTeamMap[w.playerId] ?? (w.playerId == round.player1.id ? 'team_1' : 'team_2');
+        totalTeamCorrectWords[tId] = (totalTeamCorrectWords[tId] ?? 0) + 1;
+      }
+    }
+
+    return Column(
+      children: [
+        // 1. GENEL MAÇ ÖZETİ (Toplam Doğru Kelimeler)
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: AppColors.cardBorder),
           ),
-          const SizedBox(height: 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Row(
+                    children: [
+                      Text('📊 ', style: TextStyle(fontSize: 16)),
+                      Text(
+                        'GENEL MAÇ İSTATİSTİKLERİ',
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.1,
+                          color: AppColors.primary,
+                        ),
+                      ),
+                    ],
+                  ),
+                  Text(
+                    '${allRounds.length} Raunt Oynandı',
+                    style: const TextStyle(fontSize: 11, color: AppColors.textMuted, fontWeight: FontWeight.w600),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
 
-          if (isMultiOrTeam) ...[
-            // Bütün takımlar ve her bir oyuncunun doğru kelime sayısı
-            ...round.teamScores.keys.map((teamId) {
-              final teamColor = round.teamColors[teamId] ?? const Color(0xFF10B981);
-              final teamName = round.teamNames[teamId] ?? 'Takım';
-              final teamPlayers = round.allPlayers
-                  .where((p) => round.playerTeamMap[p.id] == teamId)
-                  .toList();
-              final teamWordCount = round.words
-                  .where((w) => w.isCorrect && round.playerTeamMap[w.playerId] == teamId)
-                  .length;
+              if (isMultiOrTeam) ...[
+                ...round.teamScores.keys.map((teamId) {
+                  final teamColor = round.teamColors[teamId] ?? const Color(0xFF10B981);
+                  final teamName = round.teamNames[teamId] ?? 'Takım';
+                  final teamPlayers = round.allPlayers
+                      .where((p) => round.playerTeamMap[p.id] == teamId)
+                      .toList();
+                  final totalTeamWords = totalTeamCorrectWords[teamId] ?? 0;
 
-              return Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: const Color(0xFF0F172A),
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: teamColor.withValues(alpha: 0.35)),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 8),
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F172A),
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: teamColor.withValues(alpha: 0.35)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
-                          children: [
-                            Container(
-                              width: 10,
-                              height: 10,
-                              decoration: BoxDecoration(color: teamColor, shape: BoxShape.circle),
-                            ),
-                            const SizedBox(width: 8),
-                            Text(
-                              teamName,
-                              style: TextStyle(
-                                fontSize: 13,
-                                fontWeight: FontWeight.w800,
-                                color: teamColor,
-                              ),
-                            ),
-                          ],
-                        ),
-                        Text(
-                          '$teamWordCount Doğru',
-                          style: TextStyle(
-                            fontSize: 11.5,
-                            fontWeight: FontWeight.w800,
-                            color: teamColor,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const Divider(color: Color(0xFF1E293B), height: 16),
-                    ...teamPlayers.map((p) {
-                      final pWordCount = round.words
-                          .where((w) => w.isCorrect && w.playerId == p.id)
-                          .length;
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 3),
-                        child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Row(
                               children: [
-                                AvatarBadge(player: p, size: 24),
-                                const SizedBox(width: 8),
+                                Container(
+                                  width: 9,
+                                  height: 9,
+                                  decoration: BoxDecoration(color: teamColor, shape: BoxShape.circle),
+                                ),
+                                const SizedBox(width: 6),
                                 Text(
-                                  p.name,
-                                  style: const TextStyle(
+                                  teamName,
+                                  style: TextStyle(
                                     fontSize: 12.5,
-                                    fontWeight: FontWeight.w700,
-                                    color: AppColors.textLight,
+                                    fontWeight: FontWeight.w800,
+                                    color: teamColor,
                                   ),
                                 ),
                               ],
                             ),
-                            Text(
-                              '$pWordCount Doğru Kelime',
-                              style: TextStyle(
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w600,
-                                color: teamColor.withValues(alpha: 0.9),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: teamColor.withValues(alpha: 0.2),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                '$totalTeamWords Toplam Doğru',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  color: teamColor,
+                                ),
                               ),
                             ),
                           ],
                         ),
-                      );
-                    }),
+                        if (teamPlayers.isNotEmpty) ...[
+                          const SizedBox(height: 6),
+                          ...teamPlayers.map((p) {
+                            final pTotal = totalPlayerCorrectWords[p.id] ?? 0;
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 2),
+                              child: Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Row(
+                                    children: [
+                                      AvatarBadge(player: p, size: 20),
+                                      const SizedBox(width: 6),
+                                      Text(
+                                        p.name,
+                                        style: const TextStyle(
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w600,
+                                          color: AppColors.textLight,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  Text(
+                                    '$pTotal doğru',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w600,
+                                      color: teamColor.withValues(alpha: 0.85),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            );
+                          }),
+                        ],
+                      ],
+                    ),
+                  );
+                }),
+              ] else ...[
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                  children: [
+                    _buildPlayerStat(
+                      player: round.player1,
+                      wordsCount: totalPlayerCorrectWords[round.player1.id] ?? userWordCount,
+                      color: AppColors.playerColor,
+                    ),
+                    Container(width: 1, height: 40, color: AppColors.cardBorder),
+                    _buildPlayerStat(
+                      player: round.player2,
+                      wordsCount: totalPlayerCorrectWords[round.player2.id] ?? opponentWordCount,
+                      color: AppColors.opponentColor,
+                    ),
                   ],
                 ),
-              );
-            }),
-          ] else ...[
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildPlayerStat(
-                  player: round.player1,
-                  wordsCount: userWordCount,
-                  color: AppColors.playerColor,
-                ),
-                Container(width: 1, height: 40, color: AppColors.cardBorder),
-                _buildPlayerStat(
-                  player: round.player2,
-                  wordsCount: opponentWordCount,
-                  color: AppColors.opponentColor,
-                ),
               ],
-            ),
-          ],
-        ],
-      ),
+            ],
+          ),
+        ),
+
+        const SizedBox(height: 16),
+
+        // 2. HER BİR SORU İÇİN DOĞRU KELİMELER DETAYI
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(18),
+            border: Border.all(color: AppColors.cardBorder),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Row(
+                children: [
+                  Text('📝 ', style: TextStyle(fontSize: 16)),
+                  Text(
+                    'SORU VE RAUNT DETAYLARI',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                      letterSpacing: 1.1,
+                      color: Color(0xFF38BDF8),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              const Text(
+                'Maç boyunca oynanan her soruda verilen doğru cevaplar:',
+                style: TextStyle(fontSize: 11, color: AppColors.textMuted),
+              ),
+              const SizedBox(height: 12),
+
+              if (allRounds.isEmpty)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 12),
+                    child: Text(
+                      'Bu maçta kaydedilen raunt cevabı bulunamadı.',
+                      style: TextStyle(fontSize: 12, color: AppColors.textMuted),
+                    ),
+                  ),
+                )
+              else
+                ...allRounds.map((rSummary) {
+                  final correctWords = rSummary.words.where((w) => w.isCorrect).toList();
+
+                  return Container(
+                    margin: const EdgeInsets.only(bottom: 12),
+                    padding: const EdgeInsets.all(12),
+                    decoration: BoxDecoration(
+                      color: const Color(0xFF0F172A),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFF334155)),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Raunt Başlığı & Kazanan
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(rSummary.category.iconEmoji, style: const TextStyle(fontSize: 18)),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    'Raunt ${rSummary.roundNumber}: ${rSummary.category.title}',
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w800,
+                                      color: AppColors.textLight,
+                                    ),
+                                  ),
+                                  const SizedBox(height: 2),
+                                  Text(
+                                    '🏆 ${rSummary.winningTeamOrPlayerName} kazandı',
+                                    style: const TextStyle(
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w700,
+                                      color: Color(0xFFF59E0B),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF1E293B),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                '${correctWords.length} kelime',
+                                style: const TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppColors.textMuted,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+
+                        const SizedBox(height: 10),
+                        const Divider(color: Color(0xFF1E293B), height: 1),
+                        const SizedBox(height: 10),
+
+                        // Doğru kelimeler chip listesi
+                        if (correctWords.isEmpty)
+                          const Text(
+                            'Bu rauntta doğru kelime yazılamadı.',
+                            style: TextStyle(fontSize: 11, fontStyle: FontStyle.italic, color: AppColors.textMuted),
+                          )
+                        else
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: correctWords.map((cw) {
+                              final sender = round.allPlayers.firstWhere(
+                                (p) => p.id == cw.playerId,
+                                orElse: () => cw.playerId == round.player1.id ? round.player1 : round.player2,
+                              );
+                              final senderTeamId = round.playerTeamMap[cw.playerId] ??
+                                  (cw.playerId == round.player1.id ? 'team_1' : 'team_2');
+                              final tColor = round.teamColors[senderTeamId] ??
+                                  (cw.playerId == round.player1.id ? const Color(0xFF10B981) : const Color(0xFFEF4444));
+
+                              return Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                                decoration: BoxDecoration(
+                                  color: tColor.withValues(alpha: 0.15),
+                                  borderRadius: BorderRadius.circular(8),
+                                  border: Border.all(color: tColor.withValues(alpha: 0.4), width: 0.9),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      cw.word,
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w800,
+                                        color: tColor,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '(${sender.name})',
+                                      style: TextStyle(
+                                        fontSize: 9.5,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.white.withValues(alpha: 0.7),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                      ],
+                    ),
+                  );
+                }),
+            ],
+          ),
+        ),
+      ],
     );
   }
 

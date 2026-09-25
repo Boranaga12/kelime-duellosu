@@ -22,6 +22,9 @@ class GameController extends ChangeNotifier {
   bool _isLastFeedbackSuccess = true;
   String? _currentHint;
 
+  // Takım üyeleri arasında sırayla dönmeyi sağlayan sayaç
+  final Map<String, int> _teamMemberTurnIndex = {};
+
   // Canlı Emote Alanları
   String? _userEmote;
   String? _opponentEmote;
@@ -41,6 +44,13 @@ class GameController extends ChangeNotifier {
       _lastFeedbackMessage = null;
       notifyListeners();
     });
+  }
+
+  void clearFeedbackMessage() {
+    _feedbackTimer?.cancel();
+    _feedbackTimer = null;
+    _lastFeedbackMessage = null;
+    notifyListeners();
   }
 
   GameRound? get round => _round;
@@ -226,9 +236,12 @@ class GameController extends ChangeNotifier {
         ? (room.teams.isNotEmpty ? room.teams.first.id : 'team_1')
         : (room.players.isNotEmpty ? 'team_${room.players.first.id}' : 'team_${userPlayer.id}');
 
-    final firstPlayerId = room.isTeamMode
-        ? userPlayer.id
-        : (room.players.isNotEmpty ? room.players.first.id : userPlayer.id);
+    _teamMemberTurnIndex.clear();
+    final firstTeamPlayers = allPlayers.where((p) => playerTeamMap[p.id] == firstTeamId).toList();
+    final firstPlayerId = firstTeamPlayers.isNotEmpty ? firstTeamPlayers.first.id : userPlayer.id;
+    if (firstTeamPlayers.isNotEmpty) {
+      _teamMemberTurnIndex[firstTeamId] = 1 % firstTeamPlayers.length;
+    }
 
     _round = GameRound(
       category: category,
@@ -304,6 +317,17 @@ class GameController extends ChangeNotifier {
       final userTeamId = _round!.playerTeamMap[_round!.player1.id] ?? 'team_1';
       final winningTeamName = _round!.teamNames[winningTeamId] ?? 'Rakip Takım';
 
+      // Tamamlanan raunt özeti geçmişe eklenir
+      final roundSummary = CompletedRoundSummary(
+        roundNumber: _round!.currentRoundNumber,
+        category: _round!.category,
+        winningTeamOrPlayerId: winningTeamId,
+        winningTeamOrPlayerName: winningTeamName,
+        words: List<WordEntry>.from(_round!.words),
+        teamScoresAfterRound: updatedScores,
+      );
+      final updatedHistory = List<CompletedRoundSummary>.from(_round!.roundHistory)..add(roundSummary);
+
       if (newScore >= _round!.targetWins) {
         final isUserWinner = winningTeamId == userTeamId;
         if (isUserWinner) {
@@ -322,6 +346,7 @@ class GameController extends ChangeNotifier {
           status: RoundStatus.finished,
           defeatReason: 'timeout',
           winnerPlayerId: isUserWinner ? _round!.player1.id : _round!.player2.id,
+          roundHistory: updatedHistory,
         );
 
         notifyListeners();
@@ -346,6 +371,7 @@ class GameController extends ChangeNotifier {
         remainingTurnSeconds: _round!.turnDurationSeconds,
         currentTurnMaxSeconds: _round!.turnDurationSeconds,
         words: [],
+        roundHistory: updatedHistory,
         isShowingBriefing: true,
         briefingCountdown: 6,
         briefingMaxCountdown: 6,
@@ -373,6 +399,20 @@ class GameController extends ChangeNotifier {
 
     final roundWinnerName =
         isPlayer1TimedOut ? _round!.player2.name : _round!.player1.name;
+    final winningPlayerId = isPlayer1TimedOut ? _round!.player2.id : _round!.player1.id;
+
+    final roundSummary = CompletedRoundSummary(
+      roundNumber: _round!.currentRoundNumber,
+      category: _round!.category,
+      winningTeamOrPlayerId: winningPlayerId,
+      winningTeamOrPlayerName: roundWinnerName,
+      words: List<WordEntry>.from(_round!.words),
+      teamScoresAfterRound: {
+        _round!.player1.id: newP1Score,
+        _round!.player2.id: newP2Score,
+      },
+    );
+    final updatedHistory = List<CompletedRoundSummary>.from(_round!.roundHistory)..add(roundSummary);
 
     // Hedef galibiyet kontrolü
     if (newP1Score >= _round!.targetWins || newP2Score >= _round!.targetWins) {
@@ -400,6 +440,7 @@ class GameController extends ChangeNotifier {
         status: RoundStatus.finished,
         winnerPlayerId: winnerPlayerId,
         defeatReason: 'timeout',
+        roundHistory: updatedHistory,
       );
 
       notifyListeners();
@@ -430,6 +471,7 @@ class GameController extends ChangeNotifier {
       remainingTurnSeconds: _round!.turnDurationSeconds,
       currentTurnMaxSeconds: _round!.turnDurationSeconds,
       words: [],
+      roundHistory: updatedHistory,
       isShowingBriefing: true,
       briefingCountdown: 6,
       briefingMaxCountdown: 6,
@@ -469,6 +511,8 @@ class GameController extends ChangeNotifier {
   void endBriefingAndStartNextRound() {
     _briefingTimer?.cancel();
     if (_round == null) return;
+
+    _lastFeedbackMessage = null;
 
     _round = _round!.copyWith(
       isShowingBriefing: false,
@@ -723,40 +767,28 @@ class GameController extends ChangeNotifier {
   void _checkAndTriggerBotTurn() {
     if (_round == null || _round!.status != RoundStatus.active || _round!.isShowingBriefing) return;
 
-    if (_round!.isTeamMode) {
-      final currentTeam = _round!.currentTurnTeamId;
-      final botsInCurrentTeam = _round!.allPlayers.where(
-        (p) => p.isBot && _round!.playerTeamMap[p.id] == currentTeam,
-      ).toList();
+    final activePlayer = _round!.allPlayers.firstWhere(
+      (p) => p.id == _round!.currentTurnPlayerId,
+      orElse: () => _round!.player2,
+    );
 
-      if (botsInCurrentTeam.isNotEmpty) {
-        final botPlayer = botsInCurrentTeam[Random().nextInt(botsInCurrentTeam.length)];
-        _botEngine.playTurn(
-          category: _round!.category,
-          botPlayer: botPlayer,
-          getAlreadyUsedWords: () {
-            return _round?.words.where((w) => w.isCorrect).map((w) => w.word).toSet() ?? {};
-          },
-          onWordSelected: (word) {
-            _submitBotWordForPlayer(botPlayer, word);
-          },
-          isGameActive: () => isGameActive && _round?.currentTurnTeamId == currentTeam,
-        );
-      }
-    } else {
-      if (_round!.currentTurnPlayerId == _round!.player2.id && _round!.player2.isBot) {
-        _botEngine.playTurn(
-          category: _round!.category,
-          botPlayer: _round!.player2,
-          getAlreadyUsedWords: () {
-            return _round?.words.where((w) => w.isCorrect).map((w) => w.word).toSet() ?? {};
-          },
-          onWordSelected: (word) {
+    if (activePlayer.isBot) {
+      final bot = activePlayer;
+      _botEngine.playTurn(
+        category: _round!.category,
+        botPlayer: bot,
+        getAlreadyUsedWords: () {
+          return _round?.words.where((w) => w.isCorrect).map((w) => w.word).toSet() ?? {};
+        },
+        onWordSelected: (word) {
+          if (_round!.isTeamMode) {
+            _submitBotWordForPlayer(bot, word);
+          } else {
             _submitOpponentBotWord(word);
-          },
-          isGameActive: () => isGameActive && _round?.currentTurnPlayerId == _round?.player2.id,
-        );
-      }
+          }
+        },
+        isGameActive: () => isGameActive && _round?.currentTurnPlayerId == bot.id,
+      );
     }
   }
 
@@ -774,9 +806,14 @@ class GameController extends ChangeNotifier {
         final playersInNextTeam = _round!.allPlayers.where(
           (p) => _round!.playerTeamMap[p.id] == nextTeamId,
         ).toList();
-        final nextPlayerId = playersInNextTeam.isNotEmpty
-            ? playersInNextTeam.first.id
-            : _round!.currentTurnPlayerId;
+
+        int memberIdx = _teamMemberTurnIndex[nextTeamId] ?? 0;
+        String nextPlayerId = _round!.currentTurnPlayerId;
+        if (playersInNextTeam.isNotEmpty) {
+          memberIdx = memberIdx % playersInNextTeam.length;
+          nextPlayerId = playersInNextTeam[memberIdx].id;
+          _teamMemberTurnIndex[nextTeamId] = (memberIdx + 1) % playersInNextTeam.length;
+        }
 
         _round = _round!.copyWith(
           currentTurnTeamId: nextTeamId,
@@ -816,12 +853,28 @@ class GameController extends ChangeNotifier {
 
     if (_round == null) return;
 
+    final summary = CompletedRoundSummary(
+      roundNumber: _round!.currentRoundNumber,
+      category: _round!.category,
+      winningTeamOrPlayerId: _round!.player2.id,
+      winningTeamOrPlayerName: _round!.player2.name,
+      words: List<WordEntry>.from(_round!.words),
+      teamScoresAfterRound: _round!.isTeamMode
+          ? _round!.teamScores
+          : {
+              _round!.player1.id: _round!.player1RoundScore,
+              _round!.player2.id: _round!.player2RoundScore + 1,
+            },
+    );
+    final updatedHistory = List<CompletedRoundSummary>.from(_round!.roundHistory)..add(summary);
+
     SoundService.playDefeat();
     _round = _round!.copyWith(
       remainingTurnSeconds: 0,
       status: RoundStatus.finished,
       winnerPlayerId: _round!.player2.id,
       defeatReason: 'surrender',
+      roundHistory: updatedHistory,
     );
     _lastFeedbackMessage = 'Maçtan çekildiniz ve hükmen mağlup sayıldınız! 🏳️';
     _isLastFeedbackSuccess = false;

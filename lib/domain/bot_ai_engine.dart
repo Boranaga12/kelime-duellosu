@@ -371,11 +371,12 @@ class BotAiEngine {
 
   /// Sıra bota geldiğinde hamle sürecini başlatır
   /// 
-  /// Kural:
-  /// - Yanlış cevap verme ihtimali: %50
-  /// - Bir turda en fazla 1 defa yanlış cevap verebilir
-  /// - Mesaj gönderme süresi: Her bir mesaj için ayrı ayrı 5 ile 12 saniye arası değişken (5000 - 12000 ms).
-  ///   Bu rastgelelikte toplam süre 15 saniyeyi aşarsa bot doğal olarak süreden kaybeder.
+  /// Dengeli, Çekişmeli ve İnsansı Yapay Zeka:
+  /// - Doğrudan doğru cevap verme oranı: ~%78
+  /// - Önce hata yapıp sonra doğruyu bulma oranı: ~%16
+  /// - Doğrudan doğru cevap gecikmesi: 3.5 - 7.5 saniye arası
+  /// - Hata yaptığında: İlk hata 2.5 - 4.5 sn sonra gelir, ardından 3.0 - 5.5 sn sonra düzeltme gelir (Toplam: 5.5 - 10.0 sn, 15 saniyeyi aşmaz).
+  /// - Nadir baskı hatası (%6 veya doğru kelime bittiğinde): Bot 16 sn bekleyip süreden kaybeder.
   void playTurn({
     required Category category,
     required Set<String> Function() getAlreadyUsedWords,
@@ -400,19 +401,25 @@ class BotAiEngine {
 
     final chosenCorrectWord = availableWords[_random.nextInt(availableWords.length)];
 
-    // %50 ihtimalle bot önce yanlış bir kelime denesin (üstü çizili görünsün), ardından doğruyu bilsin
-    // Ancak bir turda en fazla 1 defa yanlış cevap verebilir!
-    final willMakeMistakeFirst = _random.nextInt(100) < 50;
+    // %6 ihtimalle bot süreyi yetiştiremeyip baskı altında kaybetsin
+    final willTimeout = _random.nextInt(100) < 6;
+    if (willTimeout) {
+      _turnTimer = Timer(const Duration(milliseconds: 16000), () {
+        if (!isGameActive()) return;
+        onWordSelected(chosenCorrectWord);
+      });
+      return;
+    }
 
-    // Mesaj gönderme süresi her bir mesaj için 5 ile 12 saniye arasında değişken (5000 - 12000 ms)
-    final firstDelay = 5000 + _random.nextInt(7001); // 5000 - 12000 ms
+    // %18 ihtimalle bot önce karakterine özgü yanlış bir kelime denesin, sonra düzeltsin
+    final willMakeMistakeFirst = _random.nextInt(100) < 18;
 
     if (willMakeMistakeFirst) {
-      // 1. Hamle (Yanlış kelime denemesi - 5 ile 12 sn sonra)
+      // 1. Hamle (Yanlış kelime denemesi - 2.5 ile 4.5 sn arasında)
+      final firstDelay = 2500 + _random.nextInt(2001); // 2500 - 4500 ms
       _turnTimer = Timer(Duration(milliseconds: firstDelay), () {
         if (!isGameActive()) return;
 
-        // Botun kendi karakterine özgü yanlış cevap listesinden kelime seç
         final wrongPool = (botPlayer?.botWrongAnswers != null && botPlayer!.botWrongAnswers!.isNotEmpty)
             ? botPlayer.botWrongAnswers!
             : (botPlayer != null ? getWrongAnswersForBot(botPlayer.name) : commonWrongWords);
@@ -420,17 +427,18 @@ class BotAiEngine {
         final wrongWord = wrongPool[_random.nextInt(wrongPool.length)];
         onWordSelected(wrongWord);
 
-        // 2. Hamle (Doğru kelimeyi bulma): Yine ayrı olarak 5 ile 12 sn arasında (5000 - 12000 ms)
-        // Eğer 1. ve 2. mesajın toplamı 15 saniyeyi aşarsa tur süresi dolacak ve bot süreden kaybedecek!
-        final secondDelay = 5000 + _random.nextInt(7001); // 5000 - 12000 ms
+        // 2. Hamle (Doğru kelimeyi bulma): 3.0 ile 5.5 sn arasında (3000 - 5500 ms)
+        // Toplam süre (5.5 - 10.0 sn) güvenli bir şekilde 15 sn içindedir
+        final secondDelay = 3000 + _random.nextInt(2501); // 3000 - 5500 ms
         _secondAttemptTimer = Timer(Duration(milliseconds: secondDelay), () {
           if (!isGameActive()) return;
           onWordSelected(chosenCorrectWord);
         });
       });
     } else {
-      // Direkt doğru kelimeyi yazma (5 ile 12 sn arasında)
-      _turnTimer = Timer(Duration(milliseconds: firstDelay), () {
+      // Direkt doğru kelimeyi yazma (3.5 ile 7.5 sn arasında insansı gecikme)
+      final delay = 3500 + _random.nextInt(4001); // 3500 - 7500 ms
+      _turnTimer = Timer(Duration(milliseconds: delay), () {
         if (!isGameActive()) return;
         onWordSelected(chosenCorrectWord);
       });

@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
@@ -321,6 +322,20 @@ class MultiplayerService {
     leaveRoom();
   }
 
+  static Map<String, dynamic>? _parseJsonMap(dynamic data) {
+    if (data == null) return null;
+    if (data is Map<String, dynamic>) return data;
+    if (data is Map) return Map<String, dynamic>.from(data);
+    if (data is String) {
+      try {
+        final decoded = jsonDecode(data);
+        if (decoded is Map<String, dynamic>) return decoded;
+        if (decoded is Map) return Map<String, dynamic>.from(decoded);
+      } catch (_) {}
+    }
+    return null;
+  }
+
   // ==========================================
   // GELİŞMİŞ ÖZEL ODA SİSTEMİ (2-6 Kişi & Takımlı - Sadece Gerçek Veriler)
   // ==========================================
@@ -340,8 +355,9 @@ class MultiplayerService {
           .onBroadcast(
             event: 'room_updated',
             callback: (payload) {
-              if (payload['room'] != null) {
-                final updatedRoom = CustomRoom.fromJson(Map<String, dynamic>.from(payload['room']));
+              final roomData = _parseJsonMap(payload['room']);
+              if (roomData != null) {
+                final updatedRoom = CustomRoom.fromJson(roomData);
                 _activeCustomRoom = updatedRoom;
                 final idx = _activeRooms.indexWhere((r) => r.roomCode == updatedRoom.roomCode);
                 if (idx != -1) {
@@ -396,16 +412,19 @@ class MultiplayerService {
           .timeout(const Duration(milliseconds: 2000));
 
       if (res != null && res['board_state'] != null) {
-        final serverRoom = CustomRoom.fromJson(Map<String, dynamic>.from(res['board_state']));
-        _activeCustomRoom = serverRoom;
-        final idx = _activeRooms.indexWhere((r) => r.roomCode == roomCode);
-        if (idx != -1) {
-          _activeRooms[idx] = serverRoom;
-        } else {
-          _activeRooms.add(serverRoom);
+        final parsedMap = _parseJsonMap(res['board_state']);
+        if (parsedMap != null) {
+          final serverRoom = CustomRoom.fromJson(parsedMap);
+          _activeCustomRoom = serverRoom;
+          final idx = _activeRooms.indexWhere((r) => r.roomCode == roomCode);
+          if (idx != -1) {
+            _activeRooms[idx] = serverRoom;
+          } else {
+            _activeRooms.add(serverRoom);
+          }
+          onRoomStateChanged?.call(serverRoom);
+          return serverRoom;
         }
-        onRoomStateChanged?.call(serverRoom);
-        return serverRoom;
       }
     } catch (e) {
       debugPrint('syncLobbyFromDatabase hatası: $e');
@@ -450,15 +469,18 @@ class MultiplayerService {
         for (final row in (response as List)) {
           if (row['board_state'] != null) {
             try {
-              final r = CustomRoom.fromJson(Map<String, dynamic>.from(row['board_state']));
-              final humanPlayers = r.players.where((p) => !p.isBot).toList();
-              if (humanPlayers.isNotEmpty) {
-                serverRooms.add(r);
-              } else {
-                // Sadece bot kalmış veya boş odaları temizle
-                try {
-                  SupabaseService.client!.from('game_rooms').delete().eq('room_code', r.roomCode);
-                } catch (_) {}
+              final parsedMap = _parseJsonMap(row['board_state']);
+              if (parsedMap != null) {
+                final r = CustomRoom.fromJson(parsedMap);
+                final humanPlayers = r.players.where((p) => !p.isBot).toList();
+                if (humanPlayers.isNotEmpty) {
+                  serverRooms.add(r);
+                } else {
+                  // Sadece bot kalmış veya boş odaları temizle
+                  try {
+                    SupabaseService.client!.from('game_rooms').delete().eq('room_code', r.roomCode);
+                  } catch (_) {}
+                }
               }
             } catch (_) {}
           } else {
@@ -610,8 +632,9 @@ class MultiplayerService {
             .maybeSingle();
 
         if (res != null) {
-          if (res['board_state'] != null) {
-            targetRoom = CustomRoom.fromJson(Map<String, dynamic>.from(res['board_state']));
+          final parsedMap = _parseJsonMap(res['board_state']);
+          if (parsedMap != null) {
+            targetRoom = CustomRoom.fromJson(parsedMap);
           } else {
             final hName = res['host_display_name']?.toString() ?? res['host_username']?.toString() ?? 'Kurucu';
             targetRoom = CustomRoom(
@@ -972,7 +995,7 @@ class MultiplayerService {
   }
 
   /// Host maçı başlattığında tüm katılımcılara bildir
-  static void broadcastGameStart(String categoryId) {
+  static Future<void> broadcastGameStart(String categoryId) async {
     LanDiscoveryService.stopBroadcasting();
 
     _currentChannel?.sendBroadcastMessage(
@@ -982,12 +1005,18 @@ class MultiplayerService {
 
     if (_activeRoomCode != null && SupabaseService.isInitialized && SupabaseService.client != null) {
       try {
-        SupabaseService.client!
+        final updateMap = <String, dynamic>{
+          'status': 'in_progress',
+          'updated_at': DateTime.now().toIso8601String(),
+        };
+        if (_activeCustomRoom != null) {
+          final updatedRoom = _activeCustomRoom!.copyWith(status: 'in_progress');
+          _activeCustomRoom = updatedRoom;
+          updateMap['board_state'] = updatedRoom.toJson();
+        }
+        await SupabaseService.client!
             .from('game_rooms')
-            .update({
-              'status': 'in_progress',
-              'updated_at': DateTime.now().toIso8601String(),
-            })
+            .update(updateMap)
             .eq('room_code', _activeRoomCode!);
       } catch (_) {}
     }

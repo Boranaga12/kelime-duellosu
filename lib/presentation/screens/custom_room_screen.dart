@@ -141,9 +141,27 @@ class _CustomRoomScreenState extends State<CustomRoomScreen>
       }
       final updated = await MultiplayerService.syncLobbyFromDatabase(roomCode);
       if (mounted && updated != null && _currentLobbyRoom != null) {
+        final wasWaiting = _currentLobbyRoom!.status == 'waiting';
         setState(() {
           _currentLobbyRoom = updated;
         });
+
+        // Eğer oyun host tarafından başlatıldıysa ve broadcast kaçtıysa otomatik maça geç
+        if (wasWaiting && updated.status == 'in_progress') {
+          t.cancel();
+          _lobbyPollTimer = null;
+          final userPlayer = context.read<ProfileController>().player;
+          final randomCategory = sampleCategories.first;
+          context.read<GameController>().startTeamOrCustomGame(
+                room: updated,
+                userPlayer: userPlayer,
+                category: randomCategory,
+                showBriefing: true,
+              );
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (_) => const BattleArenaScreen()),
+          );
+        }
       }
     });
   }

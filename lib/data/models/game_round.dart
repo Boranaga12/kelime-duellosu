@@ -5,6 +5,25 @@ import 'word_entry.dart';
 
 enum RoundStatus { waiting, active, paused, finished }
 
+/// Tamamlanan bir raundun soru ve cevap detay özeti
+class CompletedRoundSummary {
+  final int roundNumber;
+  final Category category;
+  final String winningTeamOrPlayerId;
+  final String winningTeamOrPlayerName;
+  final List<WordEntry> words;
+  final Map<String, int> teamScoresAfterRound;
+
+  const CompletedRoundSummary({
+    required this.roundNumber,
+    required this.category,
+    required this.winningTeamOrPlayerId,
+    required this.winningTeamOrPlayerName,
+    required this.words,
+    required this.teamScoresAfterRound,
+  });
+}
+
 class GameRound {
   final Category category;
   final Player player1;
@@ -38,6 +57,9 @@ class GameRound {
   final bool hasBriefingCategoryChanged;
   // Alıştırma Modu (Bot ile yapılan maçlarda kupa/altın/istatistik değişmez)
   final bool isPracticeBot;
+
+  // Maç Boyunca Tamamlanan Tüm Rauntların & Soruların Geçmişi
+  final List<CompletedRoundSummary> roundHistory;
 
   const GameRound({
     required this.category,
@@ -73,6 +95,7 @@ class GameRound {
     this.briefingMaxCountdown = 6,
     this.hasBriefingCategoryChanged = false,
     this.isPracticeBot = false,
+    this.roundHistory = const [],
   });
 
   GameRound copyWith({
@@ -103,6 +126,7 @@ class GameRound {
     int? briefingMaxCountdown,
     bool? hasBriefingCategoryChanged,
     bool? isPracticeBot,
+    List<CompletedRoundSummary>? roundHistory,
   }) {
     return GameRound(
       category: category ?? this.category,
@@ -132,6 +156,7 @@ class GameRound {
       briefingMaxCountdown: briefingMaxCountdown ?? this.briefingMaxCountdown,
       hasBriefingCategoryChanged: hasBriefingCategoryChanged ?? this.hasBriefingCategoryChanged,
       isPracticeBot: isPracticeBot ?? this.isPracticeBot,
+      roundHistory: roundHistory ?? this.roundHistory,
     );
   }
 }
