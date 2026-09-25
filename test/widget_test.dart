@@ -17,8 +17,11 @@ import 'package:kelime_savasi/presentation/controllers/profile_controller.dart';
 import 'package:kelime_savasi/presentation/widgets/avatar_badge.dart';
 import 'package:kelime_savasi/presentation/widgets/word_bubble.dart';
 
+import 'package:shared_preferences/shared_preferences.dart';
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  SharedPreferences.setMockInitialValues({});
 
   group('Türkçe Cümle ve Özel İsim Formatlama Testleri', () {
     test('Cümle formatı: Sadece ilk harf büyük olmalı', () {

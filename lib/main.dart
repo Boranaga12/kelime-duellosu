@@ -24,10 +24,14 @@ void main() async {
   // Yapay Zeka Hakemi & Öğrenilmiş Kelime Havuzunu Yükle
   await AiRefereeService.initialize();
 
+  // Profil verisini yükle (Her cihaza özel kalıcı profil)
+  final profileController = ProfileController();
+  await profileController.loadSavedProfile();
+
   runApp(
     MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => ProfileController()),
+        ChangeNotifierProvider.value(value: profileController),
         ChangeNotifierProvider(create: (_) => FriendsController()),
         ChangeNotifierProvider(create: (_) => GameController()),
         ChangeNotifierProvider(create: (_) => LeaderboardController()),
