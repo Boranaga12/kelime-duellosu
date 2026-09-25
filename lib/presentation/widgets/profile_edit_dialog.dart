@@ -215,7 +215,7 @@ class _ProfileEditDialogState extends State<ProfileEditDialog> {
                               Icon(Icons.cloud_done_rounded, color: Color(0xFF10B981), size: 20),
                               SizedBox(width: 8),
                               Text(
-                                'Supabase Hesabı Bağlı',
+                                'Çevrimiçi Hesap Bağlı',
                                 style: TextStyle(
                                   fontSize: 12.5,
                                   fontWeight: FontWeight.w700,

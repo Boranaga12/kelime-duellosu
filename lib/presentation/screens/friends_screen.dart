@@ -287,7 +287,7 @@ class _FriendsScreenState extends State<FriendsScreen> {
               ),
               const SizedBox(height: 8),
               const Text(
-                'Tüm oyunlarınız arasında ortak arkadaşlık sistemi oluşturmak, arkadaşlarınıza meydan okumak ve çevrimiçi durumlarını görmek için Supabase hesabınızla giriş yapın.',
+                'Tüm oyunlarınız arasında ortak arkadaşlık sistemi oluşturmak, arkadaşlarınıza meydan okumak ve çevrimiçi durumlarını görmek için hesabınızla giriş yapın.',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 12.5, color: AppColors.textMuted, height: 1.35),
               ),

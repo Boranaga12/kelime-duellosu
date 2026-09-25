@@ -9,7 +9,6 @@ import '../../data/categories_data.dart';
 import '../../data/models/category.dart';
 import '../../data/models/player.dart';
 import '../../data/services/multiplayer_service.dart';
-import '../../data/services/supabase_service.dart';
 import '../../domain/bot_ai_engine.dart';
 import '../controllers/game_controller.dart';
 import '../controllers/profile_controller.dart';
@@ -57,42 +56,16 @@ class _MatchmakingScreenState extends State<MatchmakingScreen> {
         _onMatchFound(bot);
       });
     } else {
-      // Gerçek Online 1v1 Eşleştirmesi (Supabase)
-      WidgetsBinding.instance.addPostFrameCallback((_) async {
-        final isOnline = await SupabaseService.checkConnection();
-        if (!mounted) return;
-
-        if (!isOnline) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '⚠️ Çevrimiçi sunucuya bağlanılamadı (${SupabaseService.connectionError ?? "Sunucu kapalı"}). 12 sn içinde rakip bulunamazsa alıştırma botuna geçilecek.',
-              ),
-              backgroundColor: const Color(0xFFEF4444),
-              duration: const Duration(seconds: 4),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-          );
-        }
-
+      // Canlı 1v1 Eşleştirmesi
+      WidgetsBinding.instance.addPostFrameCallback((_) {
         final user = context.read<ProfileController>().player;
         final game = context.read<GameController>();
 
-        // 12 saniyelik güvenlik zaman aşımı: Eğer gerçek oyuncu gelmezse bot ile oyunu başlat (kullanıcı takılı kalmasın)
-        _transitionTimer = Timer(const Duration(seconds: 12), () {
+        // 10 saniyelik akıllı eşleşme: Eğer o an aktif insan oyuncu yoksa hemen gerçekçi bir rakiple oyunu başlat
+        _transitionTimer = Timer(const Duration(seconds: 10), () {
           if (!mounted || _stage != MatchmakingStage.searching) return;
           MultiplayerService.cancelQuickMatch();
           final bot = BotAiEngine.generateBotPlayer();
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: const Text('Canlı rakip bulunamadı, antrenman botu bağlandı! 🤖'),
-              backgroundColor: const Color(0xFF0284C7),
-              duration: const Duration(seconds: 2),
-              behavior: SnackBarBehavior.floating,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-            ),
-          );
           _onMatchFound(bot);
         });
 
@@ -299,7 +272,7 @@ class _MatchmakingScreenState extends State<MatchmakingScreen> {
         Text(
           isBot
               ? 'Yapay zeka antrenman partneriniz hazırlanıyor'
-              : 'Supabase üzerinden gerçek canlı bir düellocu eşleştiriliyor',
+              : 'Gerçek bir düellocu aranıyor...',
           textAlign: TextAlign.center,
           style: const TextStyle(
             fontSize: 13,

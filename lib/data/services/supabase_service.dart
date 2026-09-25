@@ -188,23 +188,22 @@ class SupabaseService {
       final passwordHash = hashPassword(password);
       final tag = '#KW-${1000 + Random().nextInt(9000)}';
 
-      final initialProgressData = {
-        'kelime_savasi': {
-          'trophies': 1200,
-          'level': 1,
-          'wins': 0,
-          'losses': 0,
-        }
-      };
-
       final insertData = {
         'username': cleanUsername,
+        'display_name': cleanUsername,
         'password_hash': passwordHash,
-        'tag': tag,
-        'avatar': avatarEmoji,
         'email': (email != null && email.isNotEmpty) ? email : null,
         'email_verified': isEmailVerified,
-        'progress_data': initialProgressData,
+        'progress_data': {
+          'tag': tag,
+          'avatar': avatarEmoji,
+          'kelime_savasi': {
+            'trophies': 1200,
+            'level': 1,
+            'wins': 0,
+            'losses': 0,
+          },
+        },
       };
 
       final response = await _client!

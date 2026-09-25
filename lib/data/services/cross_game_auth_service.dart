@@ -149,12 +149,13 @@ class CrossGameAuthService {
 
         final insertData = {
           'username': cleanUsername,
+          'display_name': cleanUsername,
           'password_hash': passwordHash,
-          'tag': tag,
-          'avatar': avatarEmoji,
           'email': (cleanEmail != null && cleanEmail.isNotEmpty) ? cleanEmail : null,
           'email_verified': isEmailVerified,
           'progress_data': {
+            'tag': tag,
+            'avatar': avatarEmoji,
             'kelime_savasi': {
               'trophies': 1200,
               'level': 1,
@@ -240,9 +241,9 @@ class CrossGameAuthService {
 
         final player = Player(
           id: response['id']?.toString() ?? 'usr_${DateTime.now().millisecondsSinceEpoch}',
-          name: response['username']?.toString() ?? identifier,
-          tag: response['tag']?.toString() ?? '#KW-${1000 + Random().nextInt(9000)}',
-          avatarEmoji: response['avatar']?.toString() ?? '👑',
+          name: response['display_name']?.toString() ?? response['username']?.toString() ?? identifier,
+          tag: progressData['tag']?.toString() ?? response['tag']?.toString() ?? '#KW-${1000 + Random().nextInt(9000)}',
+          avatarEmoji: progressData['avatar']?.toString() ?? response['avatar']?.toString() ?? '👑',
           title: response['title']?.toString() ?? 'Sözlük Savaşçısı',
           trophies: (ksData['trophies'] as num?)?.toInt() ?? (response['trophies'] as num?)?.toInt() ?? 1200,
           level: (ksData['level'] as num?)?.toInt() ?? 5,
